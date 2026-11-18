@@ -636,7 +636,7 @@ const streakP = Array.from({ length: STREAKS }, () => new THREE.Vector3());
 let streakInit = false;
 
 // ───────────────────────── state
-const P = { pos: new THREE.Vector3(0, 300, 0), heading: 0, speed: 28, vy: 0, bank: 0, pitchVis: 0, lift: 0, lastThermal: null };
+const P = { pos: new THREE.Vector3(0, 300, 0), heading: 0, speed: 28, vy: 0, gamma: 0, bank: 0, pitchVis: 0, lift: 0, lastThermal: null };
 const fwd = new THREE.Vector3(0, 0, -1);
 const cam = { az: 2.4, el: 0.2, dist: 12, fov: 64, roll: 0, lookYaw: 2.4, lookPitch: 0, bump: 0, lastLook: -10 };
 let state = 'title'; // title | fly | respawn
@@ -754,7 +754,7 @@ function updateInput(dt) {
   if (tilt.on) {
     const r = tilt.rel, rp = tilt.relP;
     tTurn = clamp(clamp((Math.abs(r) - 0.05) / 0.4, 0, 1) * Math.sign(r) + (useJoy ? joy.x : 0), -1, 1);
-    if (!useJoy) tPitch = clamp((Math.abs(rp) - 0.06) / 0.3, 0, 1) * Math.sign(rp);
+    if (!useJoy) tPitch = clamp((Math.abs(rp) - 0.06) / 0.38, 0, 1) * Math.sign(rp);
   }
   input.turn = damp(input.turn, tTurn, useJoy || tilt.on ? 10 : 3.5, dt);
   input.pitch = damp(input.pitch, tPitch, useJoy ? 10 : tilt.on ? 6 : 3, dt);
@@ -771,21 +771,23 @@ function nearestThermalLift(p) {
 }
 
 function updatePhysics(dt) {
-  const vT = input.pitch >= 0 ? lerp(28, 56, input.pitch) : lerp(28, 16, -input.pitch);
-  const accel = (vT - P.speed) * (vT > P.speed ? 0.7 : 0.9);
-  P.speed += accel * dt;
-  const exch = clamp(-(P.speed * accel) / 30, -14, 16);
+  // the nose follows the control (forward = dive ~32°, back = climb ~27°);
+  // speed then comes from gravity along that path, so diving speeds you up and climbing bleeds speed
+  let gT = input.pitch >= 0 ? -input.pitch * 0.56 : -input.pitch * 0.48;
+  if (P.speed < 18) gT = Math.min(gT, lerp(-0.25, 0, (P.speed - 13) / 5)); // too slow: nose drops gently
+  P.gamma = damp(P.gamma, gT, 2.2, dt);
+  P.speed = Math.max(13, P.speed + (-9.8 * Math.sin(P.gamma) - (P.speed - 28) * 0.22) * dt);
   const sink = (1.3 + 0.0018 * (P.speed - 22) ** 2) / Math.max(Math.cos(P.bank), 0.5);
   const th = nearestThermalLift(P.pos);
   if (th.which) P.lastThermal = th.which;
   P.lift = damp(P.lift, th.lift, 2.5, dt);
-  P.vy = damp(P.vy, -sink + P.lift + exch, 3, dt);
+  P.vy = damp(P.vy, P.speed * Math.sin(P.gamma) - sink * Math.cos(P.gamma) + P.lift, 4, dt);
   P.bank = damp(P.bank, input.turn * 0.9, 2.2, dt);
   P.heading -= ((9.8 * Math.tan(P.bank)) / P.speed) * 1.15 * dt;
   fwd.set(-Math.sin(P.heading), 0, -Math.cos(P.heading));
-  P.pos.addScaledVector(fwd, P.speed * dt);
+  P.pos.addScaledVector(fwd, P.speed * Math.cos(P.gamma) * dt);
   P.pos.y += P.vy * dt;
-  P.pitchVis = damp(P.pitchVis, Math.atan2(P.vy, P.speed) * 0.9 - input.pitch * 0.07, 4, dt);
+  P.pitchVis = damp(P.pitchVis, P.gamma + Math.atan2(-sink, P.speed) * 0.5, 5, dt);
 
   // islands: soft bump, never a game over
   for (const is of islands) {
@@ -825,7 +827,7 @@ function updateRespawn(dt) {
     const th = P.lastThermal;
     if (th) { P.pos.set(th.wx + 90, 300, th.wz); P.heading = 0; }
     else P.pos.y = 300;
-    P.speed = 28; P.vy = 0; P.bank = 0; P.lift = 0;
+    P.speed = 28; P.vy = 0; P.gamma = 0; P.pitchVis = 0; P.bank = 0; P.lift = 0;
     fwd.set(-Math.sin(P.heading), 0, -Math.cos(P.heading));
     cam.az = P.heading; trails.forEach((t) => (t.init = false)); streakInit = false;
     showMsg('구름바다에서 다시 떠올랐어요');
@@ -873,7 +875,7 @@ function updateCamera(dt, t) {
   fpPos.set(EYE.x + view.shift.x, EYE.y, EYE.z + view.shift.y).applyMatrix4(glider.matrixWorld);
   const sway = 0.003 + smooth(36, 56, P.speed) * 0.004;
   _e.set(
-    P.pitchVis * 0.85 + 0.07 - cam.lookPitch + (vnoise(t * 0.7, 3.1) - 0.5) * sway * 4,
+    P.pitchVis * 0.95 + 0.07 - cam.lookPitch + (vnoise(t * 0.7, 3.1) - 0.5) * sway * 4,
     P.heading + cam.lookYaw + (vnoise(t * 0.5, 7.7) - 0.5) * sway * 4,
     -P.bank * 0.82
   );
