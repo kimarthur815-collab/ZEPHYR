@@ -688,12 +688,51 @@ canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// ───────────────────────── phone tilt steering (turn the phone like a steering wheel)
+const tilt = { on: false, seen: false, raw: 0, phi: 0, zero: 0, rel: 0, slow: 0, needZero: true };
+const wrapPI = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+function onOrient(e) {
+  if (e.beta == null || e.gamma == null) return;
+  const b = (e.beta * Math.PI) / 180, g = (e.gamma * Math.PI) / 180;
+  // gravity in device coords (x right, y up), then into screen coords
+  const gx = Math.cos(b) * Math.sin(g), gy = -Math.sin(b);
+  const ang = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : window.orientation || 0;
+  const th = (ang * Math.PI) / 180;
+  const sx = gx * Math.cos(th) - gy * Math.sin(th), sy = gx * Math.sin(th) + gy * Math.cos(th);
+  if (Math.hypot(sx, sy) < 0.35) return; // phone almost flat: wheel angle is undefined
+  tilt.raw = Math.atan2(sx, -sy); // clockwise = positive
+  tilt.seen = true;
+}
+function listenTilt() {
+  const D = window.DeviceOrientationEvent;
+  if (!isTouch || !D) return;
+  if (typeof D.requestPermission === 'function') {
+    D.requestPermission().then((r) => { if (r === 'granted') addEventListener('deviceorientation', onOrient); }).catch(() => {});
+  } else addEventListener('deviceorientation', onOrient);
+}
+addEventListener('orientationchange', () => { tilt.needZero = true; });
+screen.orientation?.addEventListener?.('change', () => { tilt.needZero = true; });
+function updateTilt(dt) {
+  if (!tilt.seen || state === 'title') return;
+  if (!tilt.on) { tilt.on = true; tilt.phi = tilt.raw; document.body.classList.add('tilt'); }
+  tilt.phi = dampAngle(tilt.phi, tilt.raw, 14, dt);
+  if (tilt.needZero) { tilt.zero = tilt.phi; tilt.slow = 0; tilt.needZero = false; }
+  tilt.rel = wrapPI(tilt.phi - tilt.zero);
+  // the picture follows the phone's tilt only slowly
+  tilt.slow = damp(tilt.slow, tilt.rel, 0.9, dt);
+}
+
 function updateInput(dt) {
   const kTurn = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
   const kPitch = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
   const useJoy = joy.id !== null;
-  const tTurn = useJoy ? joy.x : kTurn, tPitch = useJoy ? -joy.y : kPitch;
-  input.turn = damp(input.turn, tTurn, useJoy ? 10 : 3.5, dt);
+  let tTurn = useJoy ? joy.x : kTurn;
+  const tPitch = useJoy ? -joy.y : kPitch;
+  if (tilt.on) {
+    const r = tilt.rel, dz = 0.05;
+    tTurn = clamp(clamp((Math.abs(r) - dz) / 0.4, 0, 1) * Math.sign(r) + (useJoy ? joy.x : 0), -1, 1);
+  }
+  input.turn = damp(input.turn, tTurn, useJoy || tilt.on ? 10 : 3.5, dt);
   input.pitch = damp(input.pitch, tPitch, useJoy ? 10 : 3, dt);
 }
 
@@ -818,6 +857,9 @@ function updateCamera(dt, t) {
 
   camera.position.lerpVectors(tpPos, fpPos, b);
   camera.quaternion.slerpQuaternions(tpQuat, fpQuat, b);
+  // counter-rotate by the part of the phone's tilt the picture hasn't caught up with yet,
+  // so a fresh tilt looks level and the view leans in gradually
+  if (tilt.on) camera.rotateZ(-(tilt.rel - tilt.slow));
   // speed buffet + bump shake
   cam.bump = damp(cam.bump, 0, 3, dt);
   const amp = smooth(40, 56, P.speed) * (0.0035 + b * 0.002) + cam.bump * 0.03;
@@ -924,8 +966,10 @@ function startGame() {
   state = 'fly';
   document.body.classList.add('flying');
   $('title').classList.add('off');
-  hintEl.classList.add('on');
-  setTimeout(() => hintEl.classList.remove('on'), 9000);
+  listenTilt();
+  tilt.needZero = true;
+  setTimeout(() => hintEl.classList.add('on'), 1200);
+  setTimeout(() => hintEl.classList.remove('on'), 10000);
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
 }
 $('startBtn').addEventListener('click', startGame);
@@ -957,6 +1001,7 @@ function frame(now) {
   clock += dt;
   bumpCool -= dt;
 
+  updateTilt(dt);
   updateInput(dt);
   if (state === 'fly') updatePhysics(dt);
   else if (state === 'respawn') updateRespawn(dt);
@@ -998,5 +1043,5 @@ function frame(now) {
     composer.setSize(innerWidth, innerHeight);
   }
 }
-window.__game = { P, input, keys, view, get state() { return state; }, startGame };
+window.__game = { P, input, keys, view, tilt, get state() { return state; }, startGame };
 requestAnimationFrame(frame);
