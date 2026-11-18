@@ -700,16 +700,18 @@ canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ───────────────────────── phone tilt steering (turn the phone like a steering wheel)
-const tilt = { on: false, seen: false, raw: 0, phi: 0, zero: 0, rel: 0, slow: 0, needZero: true, steady: 0 };
+const tilt = { on: false, seen: false, raw: 0, phi: 0, zero: 0, rel: 0, slow: 0, needZero: true, steady: 0, rawP: 0, phiP: 0, zeroP: 0, relP: 0 };
 const wrapPI = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 function onOrient(e) {
   if (e.beta == null || e.gamma == null) return;
   const b = (e.beta * Math.PI) / 180, g = (e.gamma * Math.PI) / 180;
   // gravity in device coords (x right, y up), then into screen coords
-  const gx = Math.cos(b) * Math.sin(g), gy = -Math.sin(b);
+  const gx = Math.cos(b) * Math.sin(g), gy = -Math.sin(b), gz = -Math.cos(b) * Math.cos(g);
   const ang = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : window.orientation || 0;
   const th = (ang * Math.PI) / 180;
   const sx = gx * Math.cos(th) - gy * Math.sin(th), sy = gx * Math.sin(th) + gy * Math.cos(th);
+  // how far the screen leans back toward the sky (0 = upright, 90° = flat face up)
+  tilt.rawP = Math.atan2(-gz, Math.hypot(sx, sy));
   if (Math.hypot(sx, sy) < 0.35) return; // phone almost flat: wheel angle is undefined
   tilt.raw = Math.atan2(sx, -sy); // clockwise = positive
   tilt.seen = true;
@@ -725,14 +727,20 @@ addEventListener('orientationchange', () => { tilt.needZero = true; });
 screen.orientation?.addEventListener?.('change', () => { tilt.needZero = true; });
 function updateTilt(dt) {
   if (!tilt.seen || state === 'title') return;
-  if (!tilt.on) { tilt.on = true; tilt.phi = tilt.raw; document.body.classList.add('tilt'); }
-  const prev = tilt.phi;
+  if (!tilt.on) { tilt.on = true; tilt.phi = tilt.raw; tilt.phiP = tilt.rawP; document.body.classList.add('tilt'); }
+  const prev = tilt.phi, prevP = tilt.phiP;
   tilt.phi = dampAngle(tilt.phi, tilt.raw, 14, dt);
-  if (tilt.needZero) { tilt.zero = tilt.phi; tilt.slow = 0; tilt.needZero = false; }
-  // auto-level: a small tilt (< ~8°) held still for a moment is treated as drift, not a turn
-  tilt.steady = Math.abs(wrapPI(tilt.phi - prev)) / Math.max(dt, 1e-3) < 0.12 ? tilt.steady + dt : 0;
-  if (tilt.steady > 1.2 && Math.abs(wrapPI(tilt.phi - tilt.zero)) < 0.14) tilt.zero = dampAngle(tilt.zero, tilt.phi, 0.35, dt);
+  tilt.phiP = damp(tilt.phiP, tilt.rawP, 14, dt);
+  if (tilt.needZero) { tilt.zero = tilt.phi; tilt.zeroP = tilt.phiP; tilt.slow = 0; tilt.needZero = false; }
+  // auto-level: a small tilt (< ~8°) held still for a moment is treated as drift, not a command
+  const rate = (Math.abs(wrapPI(tilt.phi - prev)) + Math.abs(tilt.phiP - prevP)) / Math.max(dt, 1e-3);
+  tilt.steady = rate < 0.12 ? tilt.steady + dt : 0;
+  if (tilt.steady > 1.2) {
+    if (Math.abs(wrapPI(tilt.phi - tilt.zero)) < 0.14) tilt.zero = dampAngle(tilt.zero, tilt.phi, 0.35, dt);
+    if (Math.abs(tilt.phiP - tilt.zeroP) < 0.14) tilt.zeroP = damp(tilt.zeroP, tilt.phiP, 0.35, dt);
+  }
   tilt.rel = wrapPI(tilt.phi - tilt.zero);
+  tilt.relP = tilt.phiP - tilt.zeroP; // + = top of the phone tipped away = dive / faster
   // the picture follows the phone's tilt only slowly
   tilt.slow = damp(tilt.slow, tilt.rel, 0.9, dt);
 }
@@ -742,13 +750,14 @@ function updateInput(dt) {
   const kPitch = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
   const useJoy = joy.id !== null;
   let tTurn = useJoy ? joy.x : kTurn;
-  const tPitch = useJoy ? -joy.y : kPitch;
+  let tPitch = useJoy ? -joy.y : kPitch;
   if (tilt.on) {
-    const r = tilt.rel, dz = 0.05;
-    tTurn = clamp(clamp((Math.abs(r) - dz) / 0.4, 0, 1) * Math.sign(r) + (useJoy ? joy.x : 0), -1, 1);
+    const r = tilt.rel, rp = tilt.relP;
+    tTurn = clamp(clamp((Math.abs(r) - 0.05) / 0.4, 0, 1) * Math.sign(r) + (useJoy ? joy.x : 0), -1, 1);
+    if (!useJoy) tPitch = clamp((Math.abs(rp) - 0.06) / 0.3, 0, 1) * Math.sign(rp);
   }
   input.turn = damp(input.turn, tTurn, useJoy || tilt.on ? 10 : 3.5, dt);
-  input.pitch = damp(input.pitch, tPitch, useJoy ? 10 : 3, dt);
+  input.pitch = damp(input.pitch, tPitch, useJoy ? 10 : tilt.on ? 6 : 3, dt);
 }
 
 // ───────────────────────── physics
@@ -976,8 +985,34 @@ function updateHUD(dt) {
 }
 
 document.body.classList.add(isTouch ? 'touch' : 'desk');
-function startGame() {
+let playMode = null; // 'portrait' | 'landscape' on phones
+function goFullscreen(mode) {
+  const el = document.documentElement, req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (!req) return false;
+  try {
+    const lock = () => { try { screen.orientation?.lock?.(mode)?.catch?.(() => {}); } catch (_) {} };
+    const pr = req.call(el, { navigationUI: 'hide' });
+    if (pr && pr.then) pr.then(lock).catch(() => {}); else lock();
+    return true;
+  } catch (_) { return false; }
+}
+const rotEl = $('rotate');
+function checkRotate() {
+  if (!playMode || state === 'title') { rotEl.classList.remove('on'); return; }
+  const bad = (playMode === 'portrait') !== (innerHeight >= innerWidth);
+  rotEl.textContent = playMode === 'portrait' ? '폰을 세로로 돌려주세요' : '폰을 가로로 돌려주세요';
+  rotEl.classList.toggle('on', bad);
+}
+addEventListener('resize', () => setTimeout(checkRotate, 300));
+function startGame(mode) {
   if (state !== 'title') return;
+  if (isTouch && (mode === 'portrait' || mode === 'landscape')) {
+    playMode = mode;
+    const fs = goFullscreen(mode);
+    if (!fs && !navigator.standalone && /iPhone|iPod/.test(navigator.userAgent))
+      setTimeout(() => showMsg('아이폰은 공유 → 홈 화면에 추가로 열면 전체화면이 돼요', 5), 7500);
+    setTimeout(checkRotate, 900);
+  }
   state = 'fly';
   document.body.classList.add('flying');
   $('title').classList.add('off');
@@ -987,7 +1022,8 @@ function startGame() {
   setTimeout(() => hintEl.classList.remove('on'), 10000);
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
 }
-$('startBtn').addEventListener('click', startGame);
+$('startBtn').addEventListener('click', () => startGame());
+document.querySelectorAll('.modeBtn').forEach((b) => b.addEventListener('click', () => startGame(b.dataset.mode)));
 $('fs').addEventListener('click', () => {
   try {
     if (document.fullscreenElement) document.exitFullscreen();
