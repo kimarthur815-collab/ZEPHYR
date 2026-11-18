@@ -729,25 +729,33 @@ function frameOn(obj, origin, yAxis, hint) { // y along the bone, x toward the h
   obj.quaternion.setFromRotationMatrix(_m4);
   obj.position.copy(origin);
 }
-function updateArms() {
-  const body = glider.userData.body;
+// pilot posture, driven by the controls
+const pose = { x: 0, z: 0, turn: 0 };
+function updateArms(dt) {
+  const p = input.pitch;
+  pose.x = damp(pose.x, input.turn * 0.2, 6, dt);
+  pose.z = damp(pose.z, p > 0 ? -p * 0.3 : -p * 0.1, 6, dt); // pulling in brings you well forward; pushing out only a little
+  pose.turn = damp(pose.turn, input.turn, 6, dt);
+  const l1 = ARM_L1, l2 = ARM_L2, reach = (l1 + l2) * 0.95; // the elbow never locks straight
   for (const a of arms.userData.sides) {
-    _S.set(0.24 * a.sx + body.position.x, -1.4, -0.3 + body.position.z);
+    const side = a.sx * pose.turn; // > 0 when leaning toward this arm
+    // leaning toward a side: that shoulder comes forward and drops, the other one goes back
+    _S.set(0.24 * a.sx + pose.x, -1.4 - 0.06 * side, -0.3 + pose.z - 0.2 * side);
     _W.copy(GRIP[a.sx]).add(WRIST_OFF);
     _d.subVectors(_W, _S);
     let len = _d.length();
-    const k = Math.max(1, len / ((ARM_L1 + ARM_L2) * 0.995)); // never let the hand leave the bar
-    const l1 = ARM_L1 * k, l2 = ARM_L2 * k;
     _d.divideScalar(len);
-    len = clamp(len, Math.abs(l1 - l2) + 1e-3, l1 + l2 - 1e-4);
+    if (len > reach) { _S.copy(_W).addScaledVector(_d, -reach); len = reach; } // the arm pulls the shoulder along instead
+    len = Math.max(len, Math.abs(l1 - l2) + 1e-3);
     const along = (l1 * l1 - l2 * l2 + len * len) / (2 * len), h = Math.sqrt(Math.max(l1 * l1 - along * along, 0));
-    _pl.set(a.sx, -0.55, 0.35); // elbows out and a little down
+    const bend = 1 - len / (l1 + l2), toward = Math.max(side, 0);
+    _pl.set(a.sx * (1.35 + bend * 1.4 + toward * 0.4), -0.45 - bend * 0.5 - toward * 0.2, 0.35); // bent elbows flare out and down
     _pl.addScaledVector(_d, -_pl.dot(_d)).normalize();
     _E.copy(_S).addScaledVector(_d, along).addScaledVector(_pl, h);
     const up = _bx.subVectors(_E, _S).normalize().clone();
-    frameOn(a.upperF, _S, up, _pl); a.upper.scale.y = l1 / ARM_L1;
+    frameOn(a.upperF, _S, up, _pl);
     const fd = new THREE.Vector3().subVectors(_W, _E).normalize();
-    frameOn(a.foreF, _E, fd, _pl); a.fore.scale.y = l2 / ARM_L2;
+    frameOn(a.foreF, _E, fd, _pl);
     a.elbow.position.copy(_E);
   }
 }
@@ -1055,7 +1063,7 @@ function updateGlider(dt, t) {
   const body = glider.userData.body;
   body.position.x = damp(body.position.x, input.turn * 0.32, 6, dt);
   body.position.z = damp(body.position.z, -input.pitch * 0.24, 6, dt);
-  updateArms();
+  updateArms(dt);
   glider.updateMatrixWorld();
   sailU.uT.value = t;
   sailU.uAmt.value = 0.35 + smooth(20, 56, P.speed) * 1.4;
