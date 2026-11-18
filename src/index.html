@@ -37,7 +37,6 @@
     background:rgba(40,30,60,.22);padding:8px 16px;border-radius:999px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);pointer-events:none;white-space:nowrap;max-width:94vw;text-align:center}
   #hint.on{opacity:.95}
   @media (max-width:560px){
-    #armBtn{right:calc(14px + env(safe-area-inset-right));top:calc(58px + env(safe-area-inset-top));width:40px;padding:0;font-size:11px}
     #hud{gap:6px} .stat{padding:5px 9px;gap:4px} .stat b{font-size:16px} .lbl{display:none}
   }
   body.touch .k-desk, body.desk .k-touch, body.desk .k-tilt, body:not(.tilt) .k-tilt, body.tilt .k-touch{display:none}
@@ -47,10 +46,6 @@
   #knob{position:absolute;left:50%;top:50%;width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,.55);transform:translate(-50%,-50%)}
   #fs{position:fixed;top:calc(12px + env(safe-area-inset-top));right:calc(14px + env(safe-area-inset-right));width:40px;height:40px;border-radius:12px;
     border:1px solid rgba(255,255,255,.3);background:rgba(40,30,60,.22);color:#fff;font-size:18px;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
-  #armBtn{white-space:nowrap;position:fixed;top:calc(12px + env(safe-area-inset-top));right:calc(62px + env(safe-area-inset-right));height:40px;padding:0 12px;border-radius:12px;
-    border:1px solid rgba(255,255,255,.3);background:rgba(40,30,60,.22);color:#fff;font:inherit;font-size:13px;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-    opacity:0;pointer-events:none;transition:opacity 1.2s}
-  body.flying #armBtn{opacity:1;pointer-events:auto}
   #title{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;
     background:linear-gradient(180deg,rgba(40,50,100,.25),rgba(0,0,0,0) 45%,rgba(60,30,50,.25));transition:opacity 1.2s;padding:24px}
   #title.off{opacity:0;pointer-events:none}
@@ -85,7 +80,6 @@
   <span class="k-tilt">좌우로 기울여 방향 · 앞뒤로 기울여 오르내리기 · 두 번 탭: 수평 맞추기</span>
 </div>
 <div id="joy"><div id="knob"></div></div>
-<button id="armBtn" aria-label="팔 디자인 바꾸기">팔 A</button>
 <button id="fs" aria-label="전체 화면">⛶</button>
 <div id="white" class="layer"></div>
 <div id="title">

@@ -4,7 +4,6 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 // ───────────────────────── utils
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
@@ -668,7 +667,7 @@ function limbGeo(len, prof, base, opts = {}) {
   return g;
 }
 // overhand grip on the basebar: back of hand on top, fingers curled over the front and under
-function buildGlove(sx, gloveMat, padMat, accentMat) {
+function buildGlove(sx, gloveMat, padMat) {
   const g = new THREE.Group(), Rf = 0.038 + 0.0125;
   const fingers = [[-0.034, 0.0102], [-0.0115, 0.0118], [0.0115, 0.012], [0.034, 0.011]];
   fingers.forEach(([x, r], k) => {
@@ -691,87 +690,38 @@ function buildGlove(sx, gloveMat, padMat, accentMat) {
     new THREE.Vector3(-0.05 * sx, -0.032, 0.026), new THREE.Vector3(-0.034 * sx, -0.05, -0.006)]);
   g.add(new THREE.Mesh(new THREE.TubeGeometry(thumb, 20, 0.0125, 10), gloveMat));
   const tt = new THREE.Mesh(new THREE.SphereGeometry(0.0125, 12, 8), gloveMat); tt.position.copy(thumb.getPoint(1)); g.add(tt);
-  if (accentMat) { // knuckle guard
-    const guard = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.014, 0.034, 3, 0.006), accentMat);
-    guard.position.set(0, Math.cos(-0.5) * Rf + 0.016, -Math.sin(-0.5) * Rf + 0.004); guard.rotation.x = -0.35; g.add(guard);
-  }
   return g;
 }
-// live flight instrument (candidate B): altitude + climb rate on a little screen
-const instCanvas = document.createElement('canvas'); instCanvas.width = 256; instCanvas.height = 144;
-const instTex = new THREE.CanvasTexture(instCanvas); instTex.colorSpace = THREE.SRGBColorSpace;
-let instT = 0;
-function drawInstrument() {
-  const c = instCanvas.getContext('2d'), vy = P.vy;
-  c.fillStyle = '#0d1a14'; c.fillRect(0, 0, 256, 144);
-  c.fillStyle = '#9dffc8'; c.font = 'bold 64px monospace'; c.textAlign = 'right';
-  c.fillText(String(Math.round(P.pos.y)), 200, 76);
-  c.font = 'bold 24px monospace'; c.textAlign = 'left'; c.fillText('m', 206, 76);
-  c.fillStyle = vy >= 0 ? '#ffe08a' : '#8ec5ff'; c.font = 'bold 34px monospace'; c.textAlign = 'center';
-  c.fillText((vy >= 0 ? '▲ ' : '▼ ') + Math.abs(vy).toFixed(1), 128, 124);
-  const w = clamp(vy / 6, -1, 1) * 110;
-  c.fillRect(128 + Math.min(0, w), 132, Math.abs(w), 6);
-  instTex.needsUpdate = true;
-}
-function buildArmSet(style) {
-  const B = style === 'B';
-  const sleeve = new THREE.Color(B ? '#2b303b' : '#2f5d8a');
-  const gloveC = new THREE.Color(B ? '#22252c' : '#1b1d22');
-  const limbMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: B ? 0.62 : 0.78 });
-  const sleeveMat = new THREE.MeshStandardMaterial({ color: sleeve, roughness: B ? 0.62 : 0.78 });
+function buildArms() {
+  const sleeve = new THREE.Color('#2f5d8a'), gloveC = new THREE.Color('#1b1d22');
+  const limbMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78 });
+  const sleeveMat = new THREE.MeshStandardMaterial({ color: sleeve, roughness: 0.78 });
   const gloveMat = new THREE.MeshStandardMaterial({ color: gloveC, roughness: 0.42 });
-  const padMat = new THREE.MeshStandardMaterial({ color: B ? '#3a3f4a' : '#30343d', roughness: 0.5 });
-  const accentMat = B ? new THREE.MeshStandardMaterial({ color: '#ff7a45', roughness: 0.4, emissive: '#ff5a20', emissiveIntensity: 0.15 }) : null;
-  const stripes = B
-    ? [{ at: 0.55, w: 0.07, col: new THREE.Color('#e9edf2') }, { at: -0.55, w: 0.07, col: new THREE.Color('#e9edf2') }]
-    : [{ at: 0, w: 0.24, col: new THREE.Color('#ff8a3d'), from: 0.06, to: 0.94 }];
+  const padMat = new THREE.MeshStandardMaterial({ color: '#30343d', roughness: 0.5 });
   const set = new THREE.Group(), sides = [];
   for (const sx of [-1, 1]) {
-    const st = stripes.map((q) => ({ ...q, at: B ? q.at : 3.3 * sx }));
-    const upperGeo = limbGeo(ARM_L1, [[0, 0.08], [0.3, 0.077], [0.65, 0.068], [1, 0.059]], sleeve, { stripes: st, wrinkle: B ? 0 : 0.0028 });
+    // reflective stripe along the top of the sleeve (the limb frames mirror between the two sides)
+    const stripe = { at: 3.3 * sx, w: 0.24, col: new THREE.Color('#ff8a3d'), from: 0.06, to: 0.94 };
+    const upperGeo = limbGeo(ARM_L1, [[0, 0.08], [0.3, 0.077], [0.65, 0.068], [1, 0.059]], sleeve, { stripes: [stripe], wrinkle: 0.0028 });
     const foreGeo = limbGeo(ARM_L2, [[0, 0.059], [0.22, 0.061], [0.7, 0.05], [0.83, 0.045], [0.87, 0.057], [1, 0.052]], sleeve,
-      { stripes: B ? st : st.map((q) => ({ ...q, to: 0.8 })), cuffFrom: 0.85, cuffCol: gloveC, wrinkle: B ? 0 : 0.002 });
-    const upperF = new THREE.Group(), foreF = new THREE.Group(), topF = new THREE.Group();
+      { stripes: [{ ...stripe, to: 0.8 }], cuffFrom: 0.85, cuffCol: gloveC, wrinkle: 0.002 });
+    const upperF = new THREE.Group(), foreF = new THREE.Group();
     const upper = new THREE.Mesh(upperGeo, limbMat), fore = new THREE.Mesh(foreGeo, limbMat);
     upperF.add(upper); foreF.add(fore);
     const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.06, 24, 16), sleeveMat);
-    const glove = buildGlove(sx, gloveMat, padMat, accentMat);
+    const glove = buildGlove(sx, gloveMat, padMat);
     glove.position.copy(GRIP[sx]);
-    set.add(upperF, foreF, topF, elbow, glove);
-    if (B) { // forearm guard plates + shoulder pad
-      for (const [y, w, z] of [[0.16, 0.07, 0.06], [0.29, 0.066, 0.056], [0.42, 0.06, 0.05]]) {
-        const pl = new THREE.Mesh(new RoundedBoxGeometry(w, 0.11, 0.018, 3, 0.007), padMat);
-        pl.position.set(0, y, z); pl.userData.y = y; topF.add(pl);
-      }
-    }
-    if (sx < 0) {
-      if (B) {
-        const body = new THREE.Mesh(new RoundedBoxGeometry(0.1, 0.064, 0.022, 3, 0.008), new THREE.MeshStandardMaterial({ color: '#15171c', roughness: 0.35 }));
-        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.084, 0.047), new THREE.MeshBasicMaterial({ map: instTex, toneMapped: false }));
-        scr.position.z = 0.0115;
-        const inst = new THREE.Group(); inst.add(body, scr); inst.position.set(0, 0.36, 0.06); inst.rotation.z = Math.PI / 2;
-        topF.add(inst);
-      } else {
-        const strap = new THREE.Mesh(new THREE.CylinderGeometry(0.053, 0.053, 0.018, 24, 1, true), new THREE.MeshStandardMaterial({ color: '#202228', roughness: 0.6, side: THREE.DoubleSide }));
-        strap.position.y = 0.4; topF.add(strap);
-        const face = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.009, 28), new THREE.MeshStandardMaterial({ color: '#c9ced8', metalness: 0.85, roughness: 0.25 }));
-        face.rotation.x = Math.PI / 2; face.position.set(0, 0.4, 0.052); topF.add(face);
-        const glass = new THREE.Mesh(new THREE.CircleGeometry(0.0128, 28), new THREE.MeshStandardMaterial({ color: '#0d141c', roughness: 0.08, metalness: 0.3, emissive: '#3fa8ff', emissiveIntensity: 0.08 }));
-        glass.position.set(0, 0.4, 0.0568); topF.add(glass);
-      }
-    }
-    sides.push({ sx, upperF, foreF, topF, upper, fore, elbow });
+    set.add(upperF, foreF, elbow, glove);
+    sides.push({ sx, upperF, foreF, upper, fore, elbow });
   }
   set.userData.sides = sides;
   return set;
 }
-const armSets = { A: buildArmSet('A'), B: buildArmSet('B') };
-let armStyle = 'A';
-glider.add(armSets.A, armSets.B);
-armSets.B.visible = false;
+const arms = buildArms();
+glider.add(arms);
 
 const _S = new THREE.Vector3(), _W = new THREE.Vector3(), _E = new THREE.Vector3(), _d = new THREE.Vector3(), _pl = new THREE.Vector3();
-const _bx = new THREE.Vector3(), _bz = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _eyeL = new THREE.Vector3();
+const _bx = new THREE.Vector3(), _bz = new THREE.Vector3(), _m4 = new THREE.Matrix4();
 function frameOn(obj, origin, yAxis, hint) { // y along the bone, x toward the hint direction
   _bx.copy(hint).addScaledVector(yAxis, -hint.dot(yAxis)).normalize();
   _bz.crossVectors(_bx, yAxis);
@@ -779,10 +729,9 @@ function frameOn(obj, origin, yAxis, hint) { // y along the bone, x toward the h
   obj.quaternion.setFromRotationMatrix(_m4);
   obj.position.copy(origin);
 }
-function updateArms(dt) {
-  const set = armSets[armStyle], body = glider.userData.body;
-  _eyeL.set(EYE.x + view.shift.x, EYE.y, EYE.z + view.shift.y);
-  for (const a of set.userData.sides) {
+function updateArms() {
+  const body = glider.userData.body;
+  for (const a of arms.userData.sides) {
     _S.set(0.24 * a.sx + body.position.x, -1.4, -0.3 + body.position.z);
     _W.copy(GRIP[a.sx]).add(WRIST_OFF);
     _d.subVectors(_W, _S);
@@ -799,14 +748,8 @@ function updateArms(dt) {
     frameOn(a.upperF, _S, up, _pl); a.upper.scale.y = l1 / ARM_L1;
     const fd = new THREE.Vector3().subVectors(_W, _E).normalize();
     frameOn(a.foreF, _E, fd, _pl); a.fore.scale.y = l2 / ARM_L2;
-    // a frame on the forearm whose +z faces the pilot's eyes (guards, instrument, watch)
-    const toEye = new THREE.Vector3().subVectors(_eyeL, _E);
-    const zf = toEye.addScaledVector(fd, -toEye.dot(fd)).normalize();
-    frameOn(a.topF, _E, fd, new THREE.Vector3().crossVectors(fd, zf));
     a.elbow.position.copy(_E);
   }
-  instT -= dt;
-  if (armStyle === 'B' && instT <= 0) { instT = 0.25; drawInstrument(); }
 }
 
 // wingtip vortex trails
@@ -1112,7 +1055,7 @@ function updateGlider(dt, t) {
   const body = glider.userData.body;
   body.position.x = damp(body.position.x, input.turn * 0.32, 6, dt);
   body.position.z = damp(body.position.z, -input.pitch * 0.24, 6, dt);
-  updateArms(dt);
+  updateArms();
   glider.updateMatrixWorld();
   sailU.uT.value = t;
   sailU.uAmt.value = 0.35 + smooth(20, 56, P.speed) * 1.4;
@@ -1224,15 +1167,6 @@ function startGame(mode) {
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
 }
 $('startBtn').addEventListener('click', () => startGame());
-const armBtn = $('armBtn');
-function toggleArms() {
-  armStyle = armStyle === 'A' ? 'B' : 'A';
-  armSets.A.visible = armStyle === 'A'; armSets.B.visible = armStyle === 'B';
-  armBtn.textContent = '팔 ' + armStyle;
-  showMsg(armStyle === 'A' ? 'A안: 플라이트 재킷' : 'B안: 비행 슈트 + 계기', 1.6);
-}
-armBtn.addEventListener('click', toggleArms);
-addEventListener('keydown', (e) => { if (e.code === 'KeyB' && state !== 'title') toggleArms(); });
 document.querySelectorAll('.modeBtn').forEach((b) => b.addEventListener('click', () => startGame(b.dataset.mode)));
 $('fs').addEventListener('click', () => {
   try {
@@ -1298,5 +1232,5 @@ function frame(now) {
     composer.setSize(VW, VH);
   }
 }
-window.__game = { P, input, keys, view, tilt, setArms: (s) => { armStyle = s; armSets.A.visible = s === 'A'; armSets.B.visible = s === 'B'; }, get state() { return state; }, startGame };
+window.__game = { P, input, keys, view, tilt, get state() { return state; }, startGame };
 requestAnimationFrame(frame);
