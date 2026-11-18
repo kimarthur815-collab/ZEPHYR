@@ -105,6 +105,30 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 
+// The game lives in #root. When the phone's own auto-rotate turns the browser away from the mode the
+// player picked, #root is rotated back with CSS so the game stays put (and works with rotation lock on).
+const rootEl = document.getElementById('root');
+let gameAngle = null; // device -> game screen angle in degrees (0 portrait, 90/270 landscape), set by mode choice
+let rot = 0, VW = innerWidth, VH = innerHeight;
+const browserAngle = () => {
+  const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : window.orientation || 0;
+  return ((a % 360) + 360) % 360;
+};
+function layout() {
+  rot = gameAngle == null ? 0 : (((gameAngle - browserAngle()) % 360) + 360) % 360;
+  const W = innerWidth, H = innerHeight, swap = rot === 90 || rot === 270;
+  VW = swap ? H : W; VH = swap ? W : H;
+  rootEl.style.width = VW + 'px'; rootEl.style.height = VH + 'px';
+  rootEl.style.transform = rot === 90 ? `translate(${W}px,0) rotate(90deg)` : rot === 180 ? `translate(${W}px,${H}px) rotate(180deg)` : rot === 270 ? `translate(0,${H}px) rotate(270deg)` : 'none';
+  camera.aspect = VW / VH; camera.updateProjectionMatrix();
+  renderer.setSize(VW, VH); composer.setSize(VW, VH);
+}
+// browser (client) coords -> game coords inside #root
+function toLocal(x, y) {
+  const W = innerWidth, H = innerHeight;
+  return rot === 90 ? [y, W - x] : rot === 180 ? [W - x, H - y] : rot === 270 ? [H - y, x] : [x, y];
+}
+
 const sunLight = new THREE.DirectionalLight('#ffd6ad', 2.6);
 sunLight.position.copy(SUN).multiplyScalar(100);
 scene.add(sunLight);
@@ -660,37 +684,40 @@ const canvas = renderer.domElement;
 const taps = { down: new Map(), last: -10, x: 0, y: 0 };
 canvas.addEventListener('pointerdown', (e) => {
   if (state === 'title') return;
-  taps.down.set(e.pointerId, { t: performance.now(), x: e.clientX, y: e.clientY });
+  const [px, py] = toLocal(e.clientX, e.clientY);
+  taps.down.set(e.pointerId, { t: performance.now(), x: px, y: py });
   try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-  if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && joy.id === null) {
-    Object.assign(joy, { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0 });
-    joyEl.style.left = e.clientX + 'px'; joyEl.style.top = e.clientY + 'px'; joyEl.classList.add('on');
+  if (e.pointerType !== 'mouse' && px < VW * 0.5 && joy.id === null) {
+    Object.assign(joy, { id: e.pointerId, ox: px, oy: py, x: 0, y: 0 });
+    joyEl.style.left = px + 'px'; joyEl.style.top = py + 'px'; joyEl.classList.add('on');
     knobEl.style.transform = 'translate(-50%,-50%)';
   } else if (look.id === null) {
-    Object.assign(look, { id: e.pointerId, lx: e.clientX, ly: e.clientY });
+    Object.assign(look, { id: e.pointerId, lx: px, ly: py });
   }
 });
 canvas.addEventListener('pointermove', (e) => {
+  const [px, py] = toLocal(e.clientX, e.clientY);
   if (e.pointerId === joy.id) {
-    const R = 64, dx = e.clientX - joy.ox, dy = e.clientY - joy.oy, l = Math.hypot(dx, dy), k = l > R ? R / l : 1;
+    const R = 64, dx = px - joy.ox, dy = py - joy.oy, l = Math.hypot(dx, dy), k = l > R ? R / l : 1;
     joy.x = clamp((dx * k) / R, -1, 1); joy.y = clamp((dy * k) / R, -1, 1);
     knobEl.style.transform = `translate(calc(-50% + ${dx * k}px), calc(-50% + ${dy * k}px))`;
   } else if (e.pointerId === look.id) {
-    cam.lookYaw -= (e.clientX - look.lx) * 0.0065;
-    cam.lookPitch = clamp(cam.lookPitch + (e.clientY - look.ly) * 0.005, -0.9, 0.55);
+    cam.lookYaw -= (px - look.lx) * 0.0065;
+    cam.lookPitch = clamp(cam.lookPitch + (py - look.ly) * 0.005, -0.9, 0.55);
     cam.lookYaw = clamp(cam.lookYaw, -1.3, 1.3); // like a real neck: never turn into your own shoulder
-    look.lx = e.clientX; look.ly = e.clientY; cam.lastLook = clock;
+    look.lx = px; look.ly = py; cam.lastLook = clock;
   }
 });
 const release = (e) => {
+  const [px, py] = toLocal(e.clientX, e.clientY);
   const d = taps.down.get(e.pointerId);
   taps.down.delete(e.pointerId);
-  if (d && tilt.on && e.pointerType !== 'mouse' && performance.now() - d.t < 250 && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 14) {
+  if (d && tilt.on && e.pointerType !== 'mouse' && performance.now() - d.t < 250 && Math.hypot(px - d.x, py - d.y) < 14) {
     const now = performance.now();
-    if (now - taps.last < 350 && Math.hypot(e.clientX - taps.x, e.clientY - taps.y) < 70) {
+    if (now - taps.last < 350 && Math.hypot(px - taps.x, py - taps.y) < 70) {
       tilt.needZero = true; taps.last = -10;
       showMsg('지금 각도를 수평으로 맞췄어요', 1.6);
-    } else Object.assign(taps, { last: now, x: e.clientX, y: e.clientY });
+    } else Object.assign(taps, { last: now, x: px, y: py });
   }
   if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; joyEl.classList.remove('on'); }
   if (e.pointerId === look.id) { look.id = null; cam.lastLook = clock; }
@@ -707,8 +734,11 @@ function onOrient(e) {
   const b = (e.beta * Math.PI) / 180, g = (e.gamma * Math.PI) / 180;
   // gravity in device coords (x right, y up), then into screen coords
   const gx = Math.cos(b) * Math.sin(g), gy = -Math.sin(b), gz = -Math.cos(b) * Math.cos(g);
-  const ang = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : window.orientation || 0;
-  const th = (ang * Math.PI) / 180;
+  if (pickSide) { // landscape picked while the browser is upright: which way is the phone turned?
+    if (Math.abs(gx) > 0.5) { gameAngle = gx < 0 ? 90 : 270; layout(); }
+    pickSide = false;
+  }
+  const th = ((gameAngle == null ? browserAngle() : gameAngle) * Math.PI) / 180;
   const sx = gx * Math.cos(th) - gy * Math.sin(th), sy = gx * Math.sin(th) + gy * Math.cos(th);
   // how far the screen leans back toward the sky (0 = upright, 90° = flat face up)
   tilt.rawP = Math.atan2(-gz, Math.hypot(sx, sy));
@@ -723,8 +753,9 @@ function listenTilt() {
     D.requestPermission().then((r) => { if (r === 'granted') addEventListener('deviceorientation', onOrient); }).catch(() => {});
   } else addEventListener('deviceorientation', onOrient);
 }
-addEventListener('orientationchange', () => { tilt.needZero = true; });
-screen.orientation?.addEventListener?.('change', () => { tilt.needZero = true; });
+let pickSide = false;
+addEventListener('orientationchange', () => setTimeout(layout, 250));
+screen.orientation?.addEventListener?.('change', () => setTimeout(layout, 50));
 function updateTilt(dt) {
   if (!tilt.seen || state === 'title') return;
   if (!tilt.on) { tilt.on = true; tilt.phi = tilt.raw; tilt.phiP = tilt.rawP; document.body.classList.add('tilt'); }
@@ -998,22 +1029,18 @@ function goFullscreen(mode) {
     return true;
   } catch (_) { return false; }
 }
-const rotEl = $('rotate');
-function checkRotate() {
-  if (!playMode || state === 'title') { rotEl.classList.remove('on'); return; }
-  const bad = (playMode === 'portrait') !== (innerHeight >= innerWidth);
-  rotEl.textContent = playMode === 'portrait' ? '폰을 세로로 돌려주세요' : '폰을 가로로 돌려주세요';
-  rotEl.classList.toggle('on', bad);
-}
-addEventListener('resize', () => setTimeout(checkRotate, 300));
 function startGame(mode) {
   if (state !== 'title') return;
   if (isTouch && (mode === 'portrait' || mode === 'landscape')) {
     playMode = mode;
+    const ba = browserAngle();
+    if (mode === 'portrait') gameAngle = 0;
+    else if (ba === 90 || ba === 270) gameAngle = ba;
+    else { gameAngle = 90; pickSide = true; }
+    layout();
     const fs = goFullscreen(mode);
     if (!fs && !navigator.standalone && /iPhone|iPod/.test(navigator.userAgent))
       setTimeout(() => showMsg('아이폰은 공유 → 홈 화면에 추가로 열면 전체화면이 돼요', 5), 7500);
-    setTimeout(checkRotate, 900);
   }
   state = 'fly';
   document.body.classList.add('flying');
@@ -1034,10 +1061,8 @@ $('fs').addEventListener('click', () => {
 });
 
 addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-  composer.setSize(innerWidth, innerHeight);
+  layout();
+  setTimeout(layout, 300);
 });
 
 // ───────────────────────── loop
@@ -1087,9 +1112,9 @@ function frame(now) {
     else if (frameAvg < 1 / 57 && pixelRatio < max) pixelRatio = Math.min(max, pixelRatio + 0.1);
     else return;
     renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(innerWidth, innerHeight);
+    renderer.setSize(VW, VH);
     composer.setPixelRatio(pixelRatio);
-    composer.setSize(innerWidth, innerHeight);
+    composer.setSize(VW, VH);
   }
 }
 window.__game = { P, input, keys, view, tilt, get state() { return state; }, startGame };

@@ -12,6 +12,7 @@
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#f2dace;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   body{font-family:'Gowun Dodum',system-ui,sans-serif;color:#fff}
+  #root{position:fixed;left:0;top:0;width:100vw;height:100vh;transform-origin:0 0;overflow:hidden}
   #app,canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
   .layer{position:fixed;inset:0;pointer-events:none}
   #vignette{background:radial-gradient(ellipse at center,rgba(0,0,0,0) 58%,rgba(45,25,50,.32) 100%)}
@@ -52,9 +53,6 @@
   .modes .go{padding:12px 24px;display:inline-flex;align-items:center;gap:9px}
   .ph{display:inline-block;border:2px solid currentColor;border-radius:3px}
   .ph.p{width:10px;height:17px} .ph.l{width:17px;height:10px}
-  #rotate{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font-size:18px;padding:14px 22px;border-radius:16px;background:rgba(40,30,60,.55);
-    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;transition:opacity .4s;pointer-events:none;white-space:nowrap}
-  #rotate.on{opacity:1}
   #title h1{margin:0;font-weight:400;font-size:clamp(40px,9vw,76px);letter-spacing:.06em;text-shadow:0 2px 24px rgba(120,60,40,.45)}
   #title .sub{font-size:13px;letter-spacing:.3em;opacity:.85}
   #title .ctl{font-size:14px;line-height:1.9;opacity:.92;background:rgba(40,30,60,.2);padding:10px 18px;border-radius:14px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
@@ -65,6 +63,7 @@
 </style>
 </head>
 <body>
+<div id="root">
 <div id="app"></div>
 <div id="cloudfog" class="layer"></div>
 <div id="vignette" class="layer"></div>
@@ -83,7 +82,6 @@
 <div id="joy"><div id="knob"></div></div>
 <button id="fs" aria-label="전체 화면">⛶</button>
 <div id="white" class="layer"></div>
-<div id="rotate"></div>
 <div id="title">
   <div class="sub">HANG GLIDER · 1단계</div>
   <h1>하늘 활공</h1>
@@ -96,6 +94,7 @@
     <button class="go modeBtn" data-mode="portrait"><i class="ph p"></i>세로 모드</button>
     <button class="go modeBtn" data-mode="landscape"><i class="ph l"></i>가로 모드</button>
   </div>
+</div>
 </div>
 <script>/*BUNDLE*/</script>
 </body>
