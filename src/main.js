@@ -657,9 +657,11 @@ const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 const look = { id: null, lx: 0, ly: 0 };
 const joyEl = document.getElementById('joy'), knobEl = document.getElementById('knob');
 const canvas = renderer.domElement;
+const taps = { down: new Map(), last: -10, x: 0, y: 0 };
 canvas.addEventListener('pointerdown', (e) => {
   if (state === 'title') return;
-  canvas.setPointerCapture(e.pointerId);
+  taps.down.set(e.pointerId, { t: performance.now(), x: e.clientX, y: e.clientY });
+  try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && joy.id === null) {
     Object.assign(joy, { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0 });
     joyEl.style.left = e.clientX + 'px'; joyEl.style.top = e.clientY + 'px'; joyEl.classList.add('on');
@@ -675,12 +677,21 @@ canvas.addEventListener('pointermove', (e) => {
     knobEl.style.transform = `translate(calc(-50% + ${dx * k}px), calc(-50% + ${dy * k}px))`;
   } else if (e.pointerId === look.id) {
     cam.lookYaw -= (e.clientX - look.lx) * 0.0065;
-    cam.lookPitch = clamp(cam.lookPitch + (e.clientY - look.ly) * 0.005, view.fp ? -0.9 : -0.32, 0.95);
-    cam.lookYaw = clamp(cam.lookYaw, view.fp ? -2 : -Math.PI, view.fp ? 2 : Math.PI);
+    cam.lookPitch = clamp(cam.lookPitch + (e.clientY - look.ly) * 0.005, -0.9, 0.55);
+    cam.lookYaw = clamp(cam.lookYaw, -1.3, 1.3); // like a real neck: never turn into your own shoulder
     look.lx = e.clientX; look.ly = e.clientY; cam.lastLook = clock;
   }
 });
 const release = (e) => {
+  const d = taps.down.get(e.pointerId);
+  taps.down.delete(e.pointerId);
+  if (d && tilt.on && e.pointerType !== 'mouse' && performance.now() - d.t < 250 && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 14) {
+    const now = performance.now();
+    if (now - taps.last < 350 && Math.hypot(e.clientX - taps.x, e.clientY - taps.y) < 70) {
+      tilt.needZero = true; taps.last = -10;
+      showMsg('지금 각도를 수평으로 맞췄어요', 1.6);
+    } else Object.assign(taps, { last: now, x: e.clientX, y: e.clientY });
+  }
   if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; joyEl.classList.remove('on'); }
   if (e.pointerId === look.id) { look.id = null; cam.lastLook = clock; }
 };
@@ -689,7 +700,7 @@ canvas.addEventListener('pointercancel', release);
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ───────────────────────── phone tilt steering (turn the phone like a steering wheel)
-const tilt = { on: false, seen: false, raw: 0, phi: 0, zero: 0, rel: 0, slow: 0, needZero: true };
+const tilt = { on: false, seen: false, raw: 0, phi: 0, zero: 0, rel: 0, slow: 0, needZero: true, steady: 0 };
 const wrapPI = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 function onOrient(e) {
   if (e.beta == null || e.gamma == null) return;
@@ -715,8 +726,12 @@ screen.orientation?.addEventListener?.('change', () => { tilt.needZero = true; }
 function updateTilt(dt) {
   if (!tilt.seen || state === 'title') return;
   if (!tilt.on) { tilt.on = true; tilt.phi = tilt.raw; document.body.classList.add('tilt'); }
+  const prev = tilt.phi;
   tilt.phi = dampAngle(tilt.phi, tilt.raw, 14, dt);
   if (tilt.needZero) { tilt.zero = tilt.phi; tilt.slow = 0; tilt.needZero = false; }
+  // auto-level: a small tilt (< ~8°) held still for a moment is treated as drift, not a turn
+  tilt.steady = Math.abs(wrapPI(tilt.phi - prev)) / Math.max(dt, 1e-3) < 0.12 ? tilt.steady + dt : 0;
+  if (tilt.steady > 1.2 && Math.abs(wrapPI(tilt.phi - tilt.zero)) < 0.14) tilt.zero = dampAngle(tilt.zero, tilt.phi, 0.35, dt);
   tilt.rel = wrapPI(tilt.phi - tilt.zero);
   // the picture follows the phone's tilt only slowly
   tilt.slow = damp(tilt.slow, tilt.rel, 0.9, dt);
@@ -815,7 +830,7 @@ const _v = new THREE.Vector3(), _t = new THREE.Vector3();
 const tpPos = new THREE.Vector3(), tpQuat = new THREE.Quaternion(), fpPos = new THREE.Vector3(), fpQuat = new THREE.Quaternion();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const EYE = new THREE.Vector3(0, -1.2, -0.45);
-const view = { fp: true, blend: 0, shift: new THREE.Vector2() };
+const view = { blend: 0, shift: new THREE.Vector2() };
 function updateCamera(dt, t) {
   const looking = look.id !== null;
   if (state === 'title') {
@@ -826,7 +841,7 @@ function updateCamera(dt, t) {
     cam.lookPitch = damp(cam.lookPitch, 0, 1.6, dt);
   }
   const portrait = camera.aspect < 1;
-  view.blend = damp(view.blend, state !== 'title' && view.fp ? 1 : 0, 2.4, dt);
+  view.blend = damp(view.blend, state !== 'title' ? 1 : 0, 2.4, dt);
   const b = view.blend;
 
   // third person
@@ -973,10 +988,6 @@ function startGame() {
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
 }
 $('startBtn').addEventListener('click', startGame);
-const viewBtn = $('viewBtn');
-function toggleView() { view.fp = !view.fp; }
-viewBtn.addEventListener('click', toggleView);
-addEventListener('keydown', (e) => { if (e.code === 'KeyV' && state !== 'title') toggleView(); });
 $('fs').addEventListener('click', () => {
   try {
     if (document.fullscreenElement) document.exitFullscreen();
