@@ -6,7 +6,9 @@
 
 ## 바로 하기
 
-`dist/index.html`을 브라우저로 열면 돼요. 설치는 필요 없어요.
+**https://kimarthur815-collab.github.io/zephyr/** 에 들어가면 바로 실행돼요.
+
+저장소를 받았다면 맨 위 `index.html`을 브라우저로 열어도 돼요.
 
 ## 조작
 
@@ -21,7 +23,7 @@
 
 ## 수정하기
 
-코드 원본은 `src/`에 있어요 (`main.js`가 게임, `index.html`이 화면). 고친 뒤 다시 묶으면 `dist/index.html`이 새로 만들어져요.
+코드 원본은 `src/`에 있어요 (`main.js`가 게임, `index.html`이 화면). 고친 뒤 다시 묶으면 맨 위 `index.html`이 새로 만들어져요.
 
 ```
 npm install
