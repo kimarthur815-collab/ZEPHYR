@@ -6,7 +6,7 @@
 
 ## 바로 하기
 
-**https://kimarthur815-collab.github.io/zephyr/** 에 들어가면 바로 실행돼요.
+**https://kimarthur815-collab.github.io/ZEPHYR/** 에 들어가면 바로 실행돼요.
 
 저장소를 받았다면 맨 위 `index.html`을 브라우저로 열어도 돼요.
 
