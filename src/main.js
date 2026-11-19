@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createAudio } from './audio.js';
+import { createVolumetricClouds } from './clouds.js';
+
+// cloud look candidates: #clouds-1 / #clouds-2 / #clouds-3 (volumetric); no hash = the original sprite clouds
+const CLOUD_PRESET = (location.hash.match(/^#clouds-([123])$/) || [])[1] || null;
+addEventListener('hashchange', () => location.reload());
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -98,10 +103,17 @@ scene.fog = new THREE.FogExp2(C.horizon, 0.00066);
 const camera = new THREE.PerspectiveCamera(64, innerWidth / innerHeight, 0.5, 9000);
 
 // post: HDR render target (MSAA on desktop) -> bloom -> tone mapping
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, { type: THREE.HalfFloatType, samples: Q.aa ? 4 : 0 }));
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth * pixelRatio, innerHeight * pixelRatio, {
+  type: THREE.HalfFloatType, samples: Q.aa ? 4 : 0,
+  depthTexture: CLOUD_PRESET ? new THREE.DepthTexture(innerWidth * pixelRatio, innerHeight * pixelRatio) : null, // volumetric clouds stop at the scene's depth
+}));
 composer.setPixelRatio(pixelRatio);
 composer.setSize(innerWidth, innerHeight);
 composer.addPass(new RenderPass(scene, camera));
+const vol = CLOUD_PRESET
+  ? createVolumetricClouds(renderer, camera, CLOUD_PRESET, { mobile: isTouch, sun: SUN, fogColor: C.horizon, glowColor: C.glow, fogDensity: scene.fog.density })
+  : null;
+if (vol) composer.addPass(vol.pass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.55, 1.1);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -321,6 +333,7 @@ const clouds = new THREE.Mesh(cloudGeo, cloudMat);
 clouds.frustumCulled = false;
 clouds.renderOrder = 5;
 scene.add(clouds);
+if (vol) { clouds.visible = false; sea.material.map = null; sea.material.color.set(vol.preset.floor); }
 
 const pWX = new Float32Array(NP), pWZ = new Float32Array(NP), pD = new Float32Array(NP), pE = new Float32Array(NP);
 const order = Array.from({ length: NP }, (_, i) => i);
@@ -710,10 +723,11 @@ function buildArms() {
     const upper = new THREE.Mesh(upperGeo, limbMat), fore = new THREE.Mesh(foreGeo, limbMat);
     upperF.add(upper); foreF.add(fore);
     const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.06, 24, 16), sleeveMat);
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.081, 24, 16), sleeveMat); // closes the open end of the sleeve
     const glove = buildGlove(sx, gloveMat, padMat);
     glove.position.copy(GRIP[sx]);
-    set.add(upperF, foreF, elbow, glove);
-    sides.push({ sx, upperF, foreF, upper, fore, elbow });
+    set.add(upperF, foreF, elbow, shoulder, glove);
+    sides.push({ sx, upperF, foreF, upper, fore, elbow, shoulder });
   }
   set.userData.sides = sides;
   return set;
@@ -758,6 +772,7 @@ function updateArms(dt) {
     const fd = new THREE.Vector3().subVectors(_W, _E).normalize();
     frameOn(a.foreF, _E, fd, _pl);
     a.elbow.position.copy(_E);
+    a.shoulder.position.copy(_S);
   }
 }
 
@@ -1180,6 +1195,7 @@ function startGame(mode) {
   setTimeout(() => hintEl.classList.add('on'), 1200);
   setTimeout(() => hintEl.classList.remove('on'), 10000);
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
+  if (vol) showMsg('구름 후보 ' + CLOUD_PRESET + ': ' + vol.preset.name, 2.4);
 }
 $('startBtn').addEventListener('click', () => startGame());
 const sndBtn = $('sndBtn');
@@ -1223,15 +1239,15 @@ function frame(now) {
   updateThermals(cp, clock);
   updateGlider(dt, clock);
   updateCamera(dt, clock);
-  updateClouds(camera.position);
+  if (vol) vol.update(dt); else updateClouds(camera.position);
   updateTrails();
   updateStreaks();
 
   sky.position.copy(camera.position);
   sea.position.set(Math.round(camera.position.x / SEA_TILE) * SEA_TILE, SEA_Y, Math.round(camera.position.z / SEA_TILE) * SEA_TILE);
   moteMat.uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
-  const cloudAmt = cloudInside(camera.position);
-  cfogEl.style.opacity = (cloudAmt * 0.85).toFixed(3);
+  const cloudAmt = vol ? vol.insideAt(camera.position) : cloudInside(camera.position);
+  if (!vol) cfogEl.style.opacity = (cloudAmt * 0.85).toFixed(3); // volumetric clouds draw their own inside view
   audio.update({ speed: P.speed, vy: P.vy, lift: P.lift, bank: P.bank, cloud: cloudAmt, flying: state === 'fly' });
   updateHUD(dt);
 
@@ -1253,5 +1269,5 @@ function frame(now) {
     composer.setSize(VW, VH);
   }
 }
-window.__game = { P, input, keys, view, tilt, get state() { return state; }, startGame };
+window.__game = { P, input, keys, view, tilt, cam, get state() { return state; }, startGame };
 requestAnimationFrame(frame);
