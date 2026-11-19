@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { createAudio } from './audio.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
@@ -839,6 +840,7 @@ const release = (e) => {
     if (now - taps.last < 350 && Math.hypot(px - taps.x, py - taps.y) < 70) {
       tilt.needZero = true; taps.last = -10;
       showMsg('지금 각도를 수평으로 맞췄어요', 1.6);
+      audio.sfx.tick();
     } else Object.assign(taps, { last: now, x: px, y: py });
   }
   if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; joyEl.classList.remove('on'); }
@@ -962,9 +964,11 @@ function updatePhysics(dt) {
 }
 
 let bumpCool = 0;
+const audio = createAudio();
 function bump() {
   if (bumpCool > 0) return;
   bumpCool = 0.5; cam.bump = 1;
+  audio.sfx.bump();
   flashEl.style.transition = 'none'; flashEl.style.opacity = '0.35';
   requestAnimationFrame(() => { flashEl.style.transition = 'opacity .6s'; flashEl.style.opacity = '0'; });
 }
@@ -972,6 +976,7 @@ function bump() {
 function beginRespawn() {
   if (state !== 'fly') return;
   state = 'respawn'; respawnT = 0;
+  audio.sfx.fall();
 }
 function updateRespawn(dt) {
   respawnT += dt;
@@ -984,6 +989,7 @@ function updateRespawn(dt) {
     fwd.set(-Math.sin(P.heading), 0, -Math.cos(P.heading));
     cam.az = P.heading; trails.forEach((t) => (t.init = false)); streakInit = false;
     showMsg('구름바다에서 다시 떠올랐어요');
+    audio.sfx.respawn();
   }
   if (respawnT > 0.7) whiteEl.style.opacity = String(1 - clamp((respawnT - 0.9) / 1.0, 0, 1));
   if (respawnT > 1.9) { state = 'fly'; whiteEl.style.opacity = '0'; }
@@ -1154,6 +1160,7 @@ function goFullscreen(mode) {
 }
 function startGame(mode) {
   if (state !== 'title') return;
+  audio.start(); // must happen inside the tap/click
   if (isTouch && (mode === 'portrait' || mode === 'landscape')) {
     playMode = mode;
     const ba = browserAngle();
@@ -1175,6 +1182,10 @@ function startGame(mode) {
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
 }
 $('startBtn').addEventListener('click', () => startGame());
+const sndBtn = $('sndBtn');
+const showSnd = () => { sndBtn.textContent = audio.muted ? '🔇' : '🔊'; };
+showSnd();
+sndBtn.addEventListener('click', () => { audio.setMuted(!audio.muted); if (!audio.muted) audio.start(); showSnd(); });
 document.querySelectorAll('.modeBtn').forEach((b) => b.addEventListener('click', () => startGame(b.dataset.mode)));
 $('fs').addEventListener('click', () => {
   try {
@@ -1219,7 +1230,9 @@ function frame(now) {
   sky.position.copy(camera.position);
   sea.position.set(Math.round(camera.position.x / SEA_TILE) * SEA_TILE, SEA_Y, Math.round(camera.position.z / SEA_TILE) * SEA_TILE);
   moteMat.uniforms.uScale.value = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
-  cfogEl.style.opacity = (cloudInside(camera.position) * 0.85).toFixed(3);
+  const cloudAmt = cloudInside(camera.position);
+  cfogEl.style.opacity = (cloudAmt * 0.85).toFixed(3);
+  audio.update({ speed: P.speed, vy: P.vy, lift: P.lift, bank: P.bank, cloud: cloudAmt, flying: state === 'fly' });
   updateHUD(dt);
 
   composer.render(dt);
