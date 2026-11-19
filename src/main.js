@@ -107,6 +107,9 @@ const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerW
   type: THREE.HalfFloatType, samples: Q.aa ? 4 : 0,
   depthTexture: CLOUD_PRESET ? new THREE.DepthTexture(innerWidth * pixelRatio, innerHeight * pixelRatio) : null, // volumetric clouds stop at the scene's depth
 }));
+// the composer clones its buffer, and the clone would share the same depth texture; the cloud pass reads one
+// buffer's depth while drawing into the other, so each needs its own (otherwise phones render black)
+if (CLOUD_PRESET) composer.renderTarget2.depthTexture = new THREE.DepthTexture(innerWidth * pixelRatio, innerHeight * pixelRatio);
 composer.setPixelRatio(pixelRatio);
 composer.setSize(innerWidth, innerHeight);
 composer.addPass(new RenderPass(scene, camera));
@@ -116,6 +119,7 @@ const vol = CLOUD_PRESET
 if (vol) composer.addPass(vol.pass);
 const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.3, 0.55, 1.1);
 composer.addPass(bloom);
+if (vol) bloom.threshold = 1.35; // bright cloud tops shouldn't glow, only the sun and silver linings
 composer.addPass(new OutputPass());
 
 // The game lives in #root. When the phone's own auto-rotate turns the browser away from the mode the

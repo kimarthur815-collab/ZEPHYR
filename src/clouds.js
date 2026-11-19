@@ -13,15 +13,15 @@ export const CLOUD_PRESETS = {
   },
   2: { // 뭉게구름: towering cumulus rising out of a broken cloud sea
     name: '뭉게구름',
-    sea: [-70, 25, 38, 0.62], cu: [170, 680, 1.0, 0.2], shape: [560, 1200, 170, 0.55],
+    sea: [-70, 25, 38, 0.62], cu: [170, 680, 0.9, 0.08], shape: [560, 1200, 170, 0.55],
     light: [0.11, 0.09, 0.62, 0.5],
     sunCol: [5.6, 3.9, 2.4], ambTop: [0.42, 0.5, 0.76], ambBot: [0.3, 0.27, 0.38], floor: '#6f6f96',
   },
   3: { // 몽환 파스텔: soft cotton-candy clouds in pink and lavender
     name: '몽환 파스텔',
     sea: [-70, 40, 36, 0.78], cu: [200, 470, 0.7, 0.12], shape: [640, 1200, 220, 0.32],
-    light: [0.06, 0.3, 0.45, 0.85],
-    sunCol: [3.4, 2.0, 2.05], ambTop: [0.52, 0.42, 0.66], ambBot: [0.74, 0.46, 0.6], floor: '#a48aae',
+    light: [0.06, 0.22, 0.45, 0.6],
+    sunCol: [2.9, 1.7, 1.75], ambTop: [0.52, 0.42, 0.66], ambBot: [0.74, 0.46, 0.6], floor: '#a48aae',
   },
 };
 
