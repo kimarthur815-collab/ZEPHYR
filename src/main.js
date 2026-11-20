@@ -3,8 +3,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { createAudio } from './audio.js';
 import { createVolumetricClouds } from './clouds.js';
 
-// cloud look candidates: #clouds-1 / #clouds-2 / #clouds-3 (volumetric); no hash = the original sprite clouds
-const CLOUD_PRESET = (location.hash.match(/^#clouds-([123])$/) || [])[1] || null;
+// volumetric clouds: 1 = 노을 운해 (default). #clouds-2 / #clouds-3 still show the other candidates.
+const CLOUD_PRESET = (location.hash.match(/^#clouds-([123])$/) || [])[1] || '1';
 addEventListener('hashchange', () => location.reload());
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -1045,6 +1045,7 @@ function updateCamera(dt, t) {
   camera.lookAt(_t);
   cam.roll = damp(cam.roll, -P.bank * 0.42 * (1 - lookAmt), 4, dt);
   camera.rotateZ(cam.roll);
+  if (state === 'title') camera.rotateX(camera.aspect < 1 ? 0.42 : 0.2); // keep the glider out from behind the title panel
   tpPos.copy(camera.position); tpQuat.copy(camera.quaternion);
 
   // first person: pilot's eyes, body sways with weight shift
@@ -1207,6 +1208,7 @@ const showSnd = () => { sndBtn.textContent = audio.muted ? '🔇' : '🔊'; };
 showSnd();
 sndBtn.addEventListener('click', () => { audio.setMuted(!audio.muted); if (!audio.muted) audio.start(); showSnd(); });
 document.querySelectorAll('.modeBtn').forEach((b) => b.addEventListener('click', () => startGame(b.dataset.mode)));
+if (!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen)) $('fs').style.display = 'none';
 $('fs').addEventListener('click', () => {
   try {
     if (document.fullscreenElement) document.exitFullscreen();

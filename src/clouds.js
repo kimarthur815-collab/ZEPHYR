@@ -202,17 +202,33 @@ class CloudPass extends Pass {
     this.rt.texture.minFilter = this.rt.texture.magFilter = THREE.LinearFilter;
     this.march = new FullScreenQuad(mat);
     this.comp = new FullScreenQuad(new THREE.ShaderMaterial({
-      uniforms: { tScene: { value: null }, tClouds: { value: null }, tDepth: { value: null }, uProjInv: { value: new THREE.Matrix4() } },
+      uniforms: { tScene: { value: null }, tClouds: { value: null }, tDepth: { value: null }, uProjInv: { value: new THREE.Matrix4() }, uLow: { value: new THREE.Vector2(1, 1) } },
       vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
-      fragmentShader: `uniform sampler2D tScene, tClouds, tDepth; uniform mat4 uProjInv; varying vec2 vUv;
+      fragmentShader: `uniform sampler2D tScene, tClouds, tDepth; uniform mat4 uProjInv; uniform vec2 uLow; varying vec2 vUv;
+        float distAt(vec2 uv){
+          float d = texture2D(tDepth, uv).x;
+          if (d >= 1.) return 1e6;
+          vec4 vp = uProjInv * vec4(uv * 2. - 1., d * 2. - 1., 1.);
+          return length(vp.xyz / vp.w);
+        }
         void main(){
           vec4 s = texture2D(tScene, vUv);
+          float z = distAt(vUv);
           // the clouds are rendered at low resolution: keep them off nearby things (the glider, your arms)
           // so their edges stay crisp; a few metres of cloud in front of them would be invisible anyway
-          float dep = texture2D(tDepth, vUv).x;
-          vec4 vp = uProjInv * vec4(vUv * 2. - 1., dep * 2. - 1., 1.);
-          if (dep < 1. && length(vp.xyz / vp.w) < 20.) { gl_FragColor = vec4(s.rgb, 1.); return; }
-          vec4 c = texture2D(tClouds, vUv);
+          if (z < 20.) { gl_FragColor = vec4(s.rgb, 1.); return; }
+          // depth-aware upsampling: blend the 4 nearest low-res cloud texels, favouring the ones that saw
+          // the same surface as this pixel, so island edges get no halo or stair-steps
+          vec2 lp = vUv * uLow - .5, b = floor(lp), f = lp - b;
+          vec4 acc = vec4(0.); float ws = 0.;
+          for (int i = 0; i < 4; i++) {
+            vec2 o = vec2(float(i - (i / 2) * 2), float(i / 2));
+            vec2 uv = (b + o + .5) / uLow;
+            float wb = (o.x > .5 ? f.x : 1. - f.x) * (o.y > .5 ? f.y : 1. - f.y);
+            float wd = 1. / (.002 + abs(distAt(uv) - z) / max(z, 1.));
+            acc += texture2D(tClouds, uv) * (wb * wd + 1e-5); ws += wb * wd + 1e-5;
+          }
+          vec4 c = acc / ws;
           gl_FragColor = vec4(s.rgb * c.a + c.rgb, 1.);
         }`,
       depthTest: false, depthWrite: false,
@@ -230,6 +246,7 @@ class CloudPass extends Pass {
     this.comp.material.uniforms.tScene.value = readBuffer.texture;
     this.comp.material.uniforms.tDepth.value = readBuffer.depthTexture;
     this.comp.material.uniforms.uProjInv.value.copy(c.projectionMatrixInverse);
+    this.comp.material.uniforms.uLow.value.set(this.rt.width, this.rt.height);
     this.comp.material.uniforms.tClouds.value = this.rt.texture;
     renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
     this.comp.render(renderer);
