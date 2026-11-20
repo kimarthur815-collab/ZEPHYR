@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { createAudio } from './audio.js';
-import { createVolumetricClouds } from './clouds.js';
+import { createVolumetricClouds, CLOUD_PRESETS } from './clouds.js';
+import { createCanyon } from './canyon.js';
 
 // volumetric clouds: 1 = 노을 운해 (default). #clouds-2 / #clouds-3 still show the other candidates.
 const CLOUD_PRESET = (location.hash.match(/^#clouds-([123])$/) || [])[1] || '1';
@@ -455,6 +456,7 @@ function updateIslands(cp, t) {
 
 // ───────────────────────── thermals (rising air)
 const F_TH = 3600, TH_R = 55, TH_H = 720, TH_LIFT = 6.2;
+let thermalPeriod = F_TH;
 const thermals = [{ x: -110, z: -640 }];
 const R2 = rng(5);
 while (thermals.length < 7) {
@@ -531,14 +533,15 @@ scene.add(motes);
 
 function updateThermals(cp, t) {
   thermals.forEach((th, i) => {
-    th.wx = wrap(th.x, cp.x, F_TH); th.wz = wrap(th.z, cp.z, F_TH);
+    th.wx = wrap(th.x, cp.x, thermalPeriod); th.wz = wrap(th.z, cp.z, thermalPeriod);
+    const by = world === 'canyon' ? canyon.heightAt(th.wx, th.wz) - 5 : 0; // canyon thermals rise from the ground
     const edge = 1 - smooth(F_TH * 0.38, F_TH * 0.5, Math.hypot(th.wx - cp.x, th.wz - cp.z));
     const inside = smooth(TH_R * 0.6, TH_R * 2.2, Math.hypot(th.wx - cp.x, th.wz - cp.z));
     const m = thermalMeshes[i];
-    m.position.set(th.wx, 0, th.wz);
+    m.position.set(th.wx, by, th.wz);
     m.material.uniforms.uTime.value = t;
-    m.material.uniforms.uAlpha.value = edge * (0.45 + 0.55 * inside);
-    thCenters[i].set(th.wx, 0, th.wz);
+    m.material.uniforms.uAlpha.value = edge * (0.45 + 0.55 * inside) * (world === 'canyon' ? 0.4 : 1); // the canyon air is clear: keep the column subtle
+    thCenters[i].set(th.wx, by, th.wz);
   });
   moteMat.uniforms.uTime.value = t;
 }
@@ -963,6 +966,11 @@ function updatePhysics(dt) {
   P.pos.y += P.vy * dt;
   P.pitchVis = damp(P.pitchVis, P.gamma + Math.atan2(-sink, P.speed) * 0.5, 5, dt);
 
+  if (world === 'canyon') {
+    const hit = canyon.collide(P);
+    if (hit === 'river') beginRespawn(); else if (hit === 'bump') bump();
+    return;
+  }
   // islands: soft bump, never a game over
   for (const is of islands) {
     const s = is.ws, iv = islandVariants[is.v];
@@ -1001,13 +1009,14 @@ function updateRespawn(dt) {
   respawnT += dt;
   whiteEl.style.opacity = String(clamp(respawnT / 0.6, 0, 1));
   if (respawnT > 0.7 && respawnT - dt <= 0.7) {
-    const th = P.lastThermal;
-    if (th) { P.pos.set(th.wx + 90, 300, th.wz); P.heading = 0; }
+    const th = P.lastThermal, cy = world === 'canyon';
+    if (th) { P.pos.set(th.wx + 90, cy ? canyon.heightAt(th.wx + 90, th.wz) + 160 : 300, th.wz); P.heading = cy ? canyon.spawn.heading : 0; }
+    else if (cy) { const sp = canyon.spawn; P.pos.set(sp.x + Math.round((P.pos.x - sp.x) / canyon.period) * canyon.period, sp.y, sp.z); P.heading = sp.heading; }
     else P.pos.y = 300;
     P.speed = 28; P.vy = 0; P.gamma = 0; P.pitchVis = 0; P.bank = 0; P.lift = 0;
     fwd.set(-Math.sin(P.heading), 0, -Math.cos(P.heading));
     cam.az = P.heading; trails.forEach((t) => (t.init = false)); streakInit = false;
-    showMsg('구름바다에서 다시 떠올랐어요');
+    showMsg(cy ? '협곡 위로 다시 떠올랐어요' : '구름바다에서 다시 떠올랐어요');
     audio.sfx.respawn();
   }
   if (respawnT > 0.7) whiteEl.style.opacity = String(1 - clamp((respawnT - 0.9) / 1.0, 0, 1));
@@ -1075,7 +1084,7 @@ function updateCamera(dt, t) {
   cam.fov = damp(cam.fov, lerp(lerp(60, 84, sp), lerp(78, 94, sp), b), 2.5, dt);
   const hHalf = ((portrait ? lerp(27, 36, b) : 0) * Math.PI) / 180;
   camera.fov = portrait ? (2 * Math.atan(Math.tan(hHalf) / camera.aspect) * 180) / Math.PI + (cam.fov - lerp(60, 78, b)) * 0.5 : cam.fov;
-  camera.near = b > 0.5 ? 0.08 : 0.5;
+  camera.near = b > 0.5 ? (world === 'canyon' ? 0.15 : 0.08) : 0.5;
   camera.updateProjectionMatrix();
   // hide the pilot's body when we're inside it
   glider.userData.body.visible = b < 0.6;
@@ -1200,9 +1209,51 @@ function startGame(mode) {
   setTimeout(() => hintEl.classList.add('on'), 1200);
   setTimeout(() => hintEl.classList.remove('on'), 10000);
   setTimeout(() => showMsg('빛나는 바람 기둥 안을 빙글빙글 돌면 높이 올라가요', 4.5), 2500);
-  if (vol) showMsg('구름 후보 ' + CLOUD_PRESET + ': ' + vol.preset.name, 2.4);
+  if (location.hash.startsWith('#clouds-')) showMsg('구름 후보 ' + CLOUD_PRESET + ': ' + vol.preset.name, 2.4);
 }
 $('startBtn').addEventListener('click', () => startGame());
+
+// ───────────────────────── maps: 노을 운해 (cloud sea + floating islands) / 그랜드 캐니언
+let world = 'sea', canyon = null, wasInCourse = false;
+const SEA_FOG = scene.fog.density, CANYON_FOG = 0.00026;
+const SEA_THERMALS = thermals.map((t) => ({ x: t.x, z: t.z }));
+function setWorld(name) {
+  const c = name === 'canyon';
+  if (c && !canyon) {
+    canyon = createCanyon(renderer, { mobile: isTouch, sun: SUN, noiseTex: vol.noiseTex, weatherTex: vol.weatherTex, colors: C });
+    scene.add(canyon.group);
+  }
+  world = name;
+  if (canyon) canyon.group.visible = c;
+  islandVariants.forEach((v) => (v.mesh.visible = !c));
+  sea.visible = !c;
+  scene.fog.density = c ? CANYON_FOG : SEA_FOG;
+  vol.setPreset(c ? CLOUD_PRESETS.canyon : CLOUD_PRESETS[CLOUD_PRESET], scene.fog.density);
+  camera.far = c ? 16000 : 9000; camera.updateProjectionMatrix();
+  thermals.length = 0;
+  (c ? canyon.thermalSpots : SEA_THERMALS).forEach((t) => thermals.push({ x: t.x, z: t.z }));
+  thermalPeriod = c ? canyon.period : F_TH;
+  const sp = c ? canyon.spawn : { x: 0, y: 300, z: 0, heading: 0 };
+  P.pos.set(sp.x, sp.y, sp.z); P.heading = sp.heading;
+  Object.assign(P, { speed: 28, vy: 0, gamma: 0, pitchVis: 0, bank: 0, lift: 0, lastThermal: null });
+  fwd.set(-Math.sin(P.heading), 0, -Math.cos(P.heading)); cam.az = P.heading + cam.lookYaw;
+  trails.forEach((t) => (t.init = false)); streakInit = false;
+  try { localStorage.setItem('zephyr-map', name); } catch (_) {}
+}
+const mapBtns = document.querySelectorAll('.mapBtn');
+const markMap = () => mapBtns.forEach((b) => b.classList.toggle('on', b.dataset.map === world));
+function chooseMap(name) {
+  if (name === 'canyon' && !canyon) { // building the canyon takes a moment: show it, then build
+    const b = [...mapBtns].find((x) => x.dataset.map === 'canyon');
+    b.textContent = '만드는 중…'; document.body.classList.add('loading');
+    setTimeout(() => { setWorld('canyon'); b.textContent = '그랜드 캐니언'; document.body.classList.remove('loading'); markMap(); }, 80);
+    return;
+  }
+  setWorld(name); markMap();
+}
+mapBtns.forEach((b) => b.addEventListener('click', () => { if (state === 'title') chooseMap(b.dataset.map); }));
+markMap();
+try { if (localStorage.getItem('zephyr-map') === 'canyon') chooseMap('canyon'); } catch (_) {}
 const sndBtn = $('sndBtn');
 const showSnd = () => { sndBtn.textContent = audio.muted ? '🔇' : '🔊'; };
 showSnd();
@@ -1241,10 +1292,19 @@ function frame(now) {
   }
 
   const cp = P.pos;
-  updateIslands(cp, clock);
+  if (world !== 'canyon') updateIslands(cp, clock);
   updateThermals(cp, clock);
   updateGlider(dt, clock);
   updateCamera(dt, clock);
+  if (world === 'canyon') {
+    canyon.update(camera, vol.time);
+    // the canyon's shadows fall on the glider too
+    sunLight.intensity = damp(sunLight.intensity, 0.35 + 2.25 * canyon.sunAt(P.pos), 4, dt);
+    const inC = state === 'fly' && canyon.inCourse(P.pos);
+    if (inC && !wasInCourse) showMsg('좁은 협곡 코스! 바위 기둥과 아치를 피해 날아 보세요', 3);
+    if (!inC && wasInCourse && state === 'fly') showMsg('협곡 코스를 빠져나왔어요', 2);
+    wasInCourse = inC;
+  } else sunLight.intensity = 2.6;
   if (vol) vol.update(dt); else updateClouds(camera.position);
   updateTrails();
   updateStreaks();
@@ -1257,23 +1317,25 @@ function frame(now) {
   audio.update({ speed: P.speed, vy: P.vy, lift: P.lift, bank: P.bank, cloud: cloudAmt, flying: state === 'fly' });
   updateHUD(dt);
 
-  composer.render(dt);
-
-  // adaptive resolution: keep it smooth on phones
+  // adaptive resolution: keep it smooth on phones. Resize *before* drawing: resizing the canvas
+  // clears it, and resizing after the draw used to show one black frame.
   frameAvg = lerp(frameAvg, raw, 0.05);
   prTimer += raw;
   if (prTimer > 2) {
     prTimer = 0;
-    const max = Math.min(devicePixelRatio || 1, Q.pr);
+    const max = Math.min(devicePixelRatio || 1, Q.pr), was = pixelRatio;
     if (frameAvg > 1 / 42 && pixelRatio <= 0.7 && bloom.enabled) bloom.enabled = false;
     else if (frameAvg > 1 / 42 && pixelRatio > 0.7) pixelRatio = Math.max(0.7, pixelRatio - 0.15);
     else if (frameAvg < 1 / 57 && pixelRatio < max) pixelRatio = Math.min(max, pixelRatio + 0.1);
-    else return;
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(VW, VH);
-    composer.setPixelRatio(pixelRatio);
-    composer.setSize(VW, VH);
+    if (pixelRatio !== was) {
+      renderer.setPixelRatio(pixelRatio);
+      renderer.setSize(VW, VH);
+      composer.setPixelRatio(pixelRatio);
+      composer.setSize(VW, VH);
+    }
   }
+
+  composer.render(dt);
 }
-window.__game = { P, input, keys, view, tilt, cam, get state() { return state; }, startGame };
+window.__game = { P, input, keys, view, tilt, cam, chooseMap, get world() { return world; }, get canyon() { return canyon; }, get state() { return state; }, startGame };
 requestAnimationFrame(frame);

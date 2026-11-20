@@ -5,6 +5,13 @@ import { Pass, FullScreenQuad } from 'three/examples/jsm/postprocessing/Pass.js'
 
 // three looks, each modelled on a kind of photo
 export const CLOUD_PRESETS = {
+  canyon: { // cumulus towers high above the Grand Canyon; no cloud sea
+    name: '그랜드 캐니언',
+    sea: [-2000, -1990, 0, 0.01], cu: [950, 1550, 0.62, 0.06], shape: [520, 1500, 260, 0.5],
+    light: [0.09, 0.14, 0.6, 0.55],
+    sunCol: [4.4, 2.9, 1.7], ambTop: [0.36, 0.4, 0.62], ambBot: [0.5, 0.38, 0.42], floor: '#000',
+    maxDist: 9000, stepMax: 170, fogK: 1.0,
+  },
   1: { // 노을 운해: sunset sea of clouds seen from a plane window / a mountain top
     name: '노을 운해',
     sea: [-70, 45, 40, 0.8], cu: [210, 430, 0.5, 0.1], shape: [520, 1100, 150, 0.55],
@@ -108,7 +115,7 @@ precision highp sampler3D;
 uniform sampler2D tDepth, tWeather; uniform sampler3D tNoise;
 uniform mat4 uProjInv, uCamWorld;
 uniform vec3 uCamPos, uSun, uSunCol, uAmbTop, uAmbBot, uFogCol, uGlowCol;
-uniform float uTime, uFogDensity, uSteps, uLightSteps, uMaxDist;
+uniform float uTime, uFogDensity, uSteps, uLightSteps, uMaxDist, uStepMax;
 uniform vec4 uSea, uCu, uShape, uLight;
 varying vec2 vUv;
 vec3 WIND;
@@ -168,7 +175,7 @@ void main(){
       float tn = rd.y > 0. ? (uCu.x - ro.y) / rd.y : (seaTopMax - ro.y) / rd.y;
       t = max(t + 2., tn + .5); continue;
     }
-    float dt = clamp(t * .016, 4., 60.);
+    float dt = clamp(t * .016, 4., uStepMax);
     float d = density(p, true, hfrac);
     if (d > .004) {
       float od = 0., ls = 8., hl; vec3 lp = p;
@@ -254,7 +261,7 @@ class CloudPass extends Pass {
 }
 
 export function createVolumetricClouds(renderer, camera, presetId, { mobile, sun, fogColor, glowColor, fogDensity }) {
-  const P = CLOUD_PRESETS[presetId];
+  let P = CLOUD_PRESETS[presetId];
   const weather = makeWeather();
   const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]);
   const mat = new THREE.ShaderMaterial({
@@ -263,7 +270,7 @@ export function createVolumetricClouds(renderer, camera, presetId, { mobile, sun
       uProjInv: { value: new THREE.Matrix4() }, uCamWorld: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() },
       uSun: { value: sun.clone() }, uSunCol: { value: v3(P.sunCol) }, uAmbTop: { value: v3(P.ambTop) }, uAmbBot: { value: v3(P.ambBot) },
       uFogCol: { value: fogColor.clone() }, uGlowCol: { value: glowColor.clone() }, uFogDensity: { value: fogDensity * 0.6 },
-      uTime: { value: 0 }, uSteps: { value: mobile ? 56 : 110 }, uLightSteps: { value: mobile ? 4 : 6 }, uMaxDist: { value: 3600 },
+      uTime: { value: 0 }, uSteps: { value: mobile ? 56 : 110 }, uLightSteps: { value: mobile ? 4 : 6 }, uMaxDist: { value: 3600 }, uStepMax: { value: 60 },
       uSea: { value: new THREE.Vector4(...P.sea) }, uCu: { value: new THREE.Vector4(...P.cu) },
       uShape: { value: new THREE.Vector4(...P.shape) }, uLight: { value: new THREE.Vector4(...P.light) },
     },
@@ -272,6 +279,16 @@ export function createVolumetricClouds(renderer, camera, presetId, { mobile, sun
     depthTest: false, depthWrite: false,
   });
   const pass = new CloudPass(camera, mat, mobile ? 0.36 : 0.75);
+  let baseFog = fogDensity;
+  function setPreset(np, sceneFogDensity = baseFog) {
+    P = np; baseFog = sceneFogDensity;
+    const u = mat.uniforms;
+    u.uSea.value.set(...P.sea); u.uCu.value.set(...P.cu); u.uShape.value.set(...P.shape); u.uLight.value.set(...P.light);
+    u.uSunCol.value.set(...P.sunCol); u.uAmbTop.value.set(...P.ambTop); u.uAmbBot.value.set(...P.ambBot);
+    u.uMaxDist.value = P.maxDist ?? 3600; u.uStepMax.value = P.stepMax ?? 60;
+    u.uFogDensity.value = sceneFogDensity * (P.fogK ?? 0.6);
+  }
+  setPreset(P);
 
   // rough CPU copy of the density, for "are we inside a cloud" (sound cue)
   const wAt = (x, z, ch) => {
@@ -280,7 +297,8 @@ export function createVolumetricClouds(renderer, camera, presetId, { mobile, sun
   };
   let time = 0;
   return {
-    pass, preset: P,
+    pass, setPreset, get preset() { return P; }, get time() { return time; },
+    weatherTex: weather.tex, noiseTex: mat.uniforms.tNoise.value,
     update(dt) { time += dt; mat.uniforms.uTime.value = time; },
     insideAt(p) {
       const wx = p.x + time * 3.5, wz = p.z + time * 1.3;
